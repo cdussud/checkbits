@@ -2,6 +2,12 @@ require 'digest'
 require 'find'
 require 'oj'
 
+# TODO
+# Next up
+#  - properly save and output LKG timestamp of changed files
+#  - save file modification time to compare too
+#  - output elapsed time
+
 CHECKSUM_FILE = 'checkbits.json'
 MAX_FILE_SIZE = 30_000_000 # 30MB
 
@@ -94,19 +100,26 @@ begin
   puts "Verifying #{files.count} files"
   [files[start..-1], files[0..start - 1]].each do |list|
     list.each do |short_path|
-      checksum = Digest::SHA256.file(File.join(directory,short_path)).base64digest
+
+      full_path = File.join(directory,short_path)
+      modified_at = File.mtime(full_path)
+      checksum = Digest::SHA512.file(full_path).base64digest
       entry = ChecksumEntry.new(checksum_map[short_path])
+
       if entry.present?
         if checksum == entry.checksum
           puts "Verified #{short_path}"
-        else
+        elsif modified_at == entry.file_modified_at
           puts "[ERROR] checksum changed: #{short_path}"
           changed_files << short_path
+        else
+          puts "[DEBUG] File changed: #{short_path}"
         end
       else
-        puts "Adding new file #{short_path}"
-        checksum_map[short_path] = [checksum, 0, Time.now]
-      end 
+        puts "Added new file #{short_path}"
+        checksum_map[short_path] = [checksum, modified_at, Time.now]
+      end
+
     end
   end
 rescue Interrupt
@@ -118,18 +131,18 @@ end
 #
 # Write checksum file for next time
 #
-json = Oj.dump(checksum_map)
-File.open(checksum_file, 'w') { |f| f.write(json) }
-File.delete(backup_file)
-puts "\nSuccessfully wrote checksums to #{checksum_file}"
+begin
+  json = Oj.dump(checksum_map)
+  File.open(checksum_file, 'w') { |f| f.write(json) }
+  File.delete(backup_file)
+  puts "\nSuccessfully wrote checksums to #{checksum_file}"
+rescue => e
+  puts e.message
+end
 
 if changed_files.any?
   puts "\nAll changed files"
   puts changed_files
+else
+  puts "\nNo problems found!"
 end
-
-
-# TODO
-# Next up
-#  - properly save and output LKG timestamp of changed files
-#  - save file modification time to compare too
