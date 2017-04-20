@@ -1,0 +1,16 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    oj (2.18.5)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  oj
+
+RUBY VERSION
+   ruby 2.3.1p112
+
+BUNDLED WITH
+   1.13.6

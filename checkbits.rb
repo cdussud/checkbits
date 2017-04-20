@@ -1,37 +1,24 @@
 require 'digest'
 require 'find'
-require 'oj'
+require 'bundler'
+Bundler.require
 
 # TODO
 # Next up
-#  - properly save and output LKG timestamp of changed files
-#  - save file modification time to compare too
 #  - output elapsed time
 
 CHECKSUM_FILE = 'checkbits.json'
 MAX_FILE_SIZE = 30_000_000 # 30MB
 
 class ChecksumEntry
-  attr_reader :entries
+  attr_accessor :checksum
+  attr_accessor :file_modified_at
+  attr_accessor :verified_at
 
-  def initialize(entries)
-    @entries = entries
-  end
-
-  def checksum
-    entries[0]
-  end
-
-  def file_modified_at
-    entries[1]
-  end
-
-  def verified_at
-    entries[2]
-  end
-
-  def present?
-    entries != nil
+  def initialize(checksum, file_modified_at, verified_at)
+    self.checksum = checksum
+    self.file_modified_at = file_modified_at
+    self.verified_at = verified_at
   end
 end
 
@@ -104,20 +91,21 @@ begin
       full_path = File.join(directory,short_path)
       modified_at = File.mtime(full_path)
       checksum = Digest::SHA512.file(full_path).base64digest
-      entry = ChecksumEntry.new(checksum_map[short_path])
+      entry = checksum_map[short_path]
 
-      if entry.present?
+      if !entry.nil?
         if checksum == entry.checksum
+          entry.verified_at = Time.now
           puts "Verified #{short_path}"
         elsif modified_at == entry.file_modified_at
           puts "[ERROR] checksum changed: #{short_path}"
-          changed_files << short_path
+          changed_files << { file_name: short_path, last_verified: entry.verified_at }
         else
           puts "[DEBUG] File changed: #{short_path}"
         end
       else
         puts "Added new file #{short_path}"
-        checksum_map[short_path] = [checksum, modified_at, Time.now]
+        checksum_map[short_path] = ChecksumEntry.new(checksum, modified_at, Time.now)
       end
 
     end
@@ -134,15 +122,15 @@ end
 begin
   json = Oj.dump(checksum_map)
   File.open(checksum_file, 'w') { |f| f.write(json) }
-  File.delete(backup_file)
   puts "\nSuccessfully wrote checksums to #{checksum_file}"
+  File.delete(backup_file)
 rescue => e
   puts e.message
 end
 
 if changed_files.any?
   puts "\nAll changed files"
-  puts changed_files
+  changed_files.each { |x| puts "#{x[:file_name]}, #{x[:last_verified]}" }
 else
   puts "\nNo problems found!"
 end
