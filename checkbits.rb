@@ -3,8 +3,31 @@ require 'find'
 require 'oj'
 
 CHECKSUM_FILE = 'checkbits.json'
-BACKUP_FILE = CHECKSUM_FILE + '.backup'
 MAX_FILE_SIZE = 30_000_000 # 30MB
+
+class ChecksumEntry
+  attr_reader :entries
+
+  def initialize(entries)
+    @entries = entries
+  end
+
+  def checksum
+    entries[0]
+  end
+
+  def file_modified_at
+    entries[1]
+  end
+
+  def verified_at
+    entries[2]
+  end
+
+  def present?
+    entries != nil
+  end
+end
 
 # 
 # Computes checksums for all files in a directory tree and
@@ -16,12 +39,13 @@ def system_name?(path)
 end
 
 directory = ARGV.first
-puts "Base directory is #{directory}"
+checksum_file = File.join(directory, CHECKSUM_FILE)
+backup_file = checksum_file + '.backup'
 
 # Load checksum file
 begin
-  previous_json = File.open(CHECKSUM_FILE, 'r') { |f| f.read }
-  File.rename(CHECKSUM_FILE, BACKUP_FILE)
+  previous_json = File.open(checksum_file, 'r') { |f| f.read }
+  File.rename(checksum_file, backup_file)
   checksum_map = Oj.load(previous_json)
 rescue => e
   checksum_map = {}
@@ -31,58 +55,81 @@ new_checksums = {}
 changed_files = []
 
 begin
-  # Recursive directory walk using the Find module
+
+  # Recursive directory walk to find all files we want to check.  This is how
+  # we handle deleted files, handle renames, etc. When a found file
+  # is in the old checksum map we copy it over
+
+  puts "Finding all files in #{directory}"
+  puts "\n"
   Find.find(directory) do |path|
 
     if File.directory?(path)
       Find.prune if system_name?(path) # skip directories starting with .
     elsif !system_name?(path)
       size = File.size(path)
-      display_name = path[directory.length + 1..-1]
+      short_path = path[directory.length + 1..-1]
 
       if size > MAX_FILE_SIZE
-        puts "Skipping large file (#{size.to_f / 1e6} MB): #{display_name}"
+        puts "Skipping large file (#{size.to_f / 1e6} MB): #{short_path}"
         next
       end
 
-      checksum = Digest::SHA256.file(path).base64digest
-      entry = checksum_map[path]
-      if entry != nil
-        if checksum == entry[0]
-          puts "Verified #{display_name}" 
-        else
-          # TODO: last known good
-          puts "[ERROR] checksum changed: #{display_name}"
-          changed_files << path
-        end
-      else
-        puts "Adding new file #{display_name}"
-      end
-
-      # TODO: if a checksum failed should we really save the new one?
-      new_checksums[path] = [checksum, Time.now]
+      new_checksums[short_path] = checksum_map[short_path]
     end
   end
 
-  # Write out new file. This is how we prune out deleted or moved files
-  json = Oj.dump(new_checksums)
-  File.open(CHECKSUM_FILE, 'w') { |f| f.write(json) }
-  File.delete(BACKUP_FILE)
-  puts "Successfully wrote json file"
+  checksum_map = new_checksums # can toss out the checksum_map's memory
+  files = checksum_map.keys
+
+
+  #
+  # Next step is to walk through all files in the new checksum list and validate them
+  # We start at a random location so that it at leat makes progress if the app is 
+  # stopped and restarted a lot
+  #
+
+  start = Random.new.rand(files.count)
+
+  puts "Verifying #{files.count} files"
+  [files[start..-1], files[0..start - 1]].each do |list|
+    list.each do |short_path|
+      checksum = Digest::SHA256.file(File.join(directory,short_path)).base64digest
+      entry = ChecksumEntry.new(checksum_map[short_path])
+      if entry.present?
+        if checksum == entry.checksum
+          puts "Verified #{short_path}"
+        else
+          puts "[ERROR] checksum changed: #{short_path}"
+          changed_files << short_path
+        end
+      else
+        puts "Adding new file #{short_path}"
+        checksum_map[short_path] = [checksum, 0, Time.now]
+      end 
+    end
+  end
 rescue Interrupt
   puts "Exiting early!"
 rescue => e
   puts e.message
-ensure
-  if changed_files.any?
-    puts "All changed files"
-    puts changed_file
-  end
+end
+
+#
+# Write checksum file for next time
+#
+json = Oj.dump(checksum_map)
+File.open(checksum_file, 'w') { |f| f.write(json) }
+File.delete(backup_file)
+puts "\nSuccessfully wrote checksums to #{checksum_file}"
+
+if changed_files.any?
+  puts "\nAll changed files"
+  puts changed_files
 end
 
 
 # TODO
 # Next up
-#  - for each file compare the checksum to the precomputed one
-#   - if it differs raise a warning and output last known good time
-#  - be able to do partial checks of the whold directory
+#  - properly save and output LKG timestamp of changed files
+#  - save file modification time to compare too
