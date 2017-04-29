@@ -100,7 +100,7 @@ begin
         if checksum == entry.checksum
           entry.verified_at = Time.now
           puts "Verified #{short_path}"
-        elsif modified_at == entry.file_modified_at
+        elsif modified_at.to_i == entry.file_modified_at.to_i
           puts "[ERROR] checksum changed: #{short_path}"
           failed_files << OpenStruct.new(file_name: short_path, last_verified: entry.verified_at)
         else
@@ -143,7 +143,7 @@ end
 
 if failed_files.any?
   puts "\nFound some possibly corrupted files"
-  failed_files.each { |x| puts "#{x.file_name}, #{x.last_verified}" }
+  failed_files.each { |x| puts "#{x.file_name}: #{x.last_verified}" }
 else
   puts "\nNo problems found!"
 end
