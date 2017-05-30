@@ -6,6 +6,12 @@ Bundler.require
 CHECKSUM_FILE = 'checkbits.json'
 MAX_FILE_SIZE = 30_000_000 # 30MB
 
+# Next up
+# - save state even if the attached volume is disconnected
+# - or periodically save the state? 
+# - maybe progress indication
+# - maybe start where we last left off instead of random
+
 class ChecksumEntry
   attr_accessor :checksum
   attr_accessor :file_modified_at
@@ -33,10 +39,19 @@ backup_file = checksum_file + '.backup'
 
 # Load checksum file
 begin
-  previous_json = File.open(checksum_file, 'r') { |f| f.read }
-  File.rename(checksum_file, backup_file)
+  file_to_load =
+    if File.exist?(checksum_file)
+      FileUtils.copy(checksum_file, backup_file)
+      checksum_file
+    else
+      puts "Couldn't find main json file -- attempting to use backup"
+      backup_file
+    end
+
+  previous_json = File.open(file_to_load, 'r') { |f| f.read }
   checksum_map = Oj.load(previous_json)
 rescue => e
+  puts "Error: #{e.message}. Starting with blank file"
   checksum_map = {}
 end
 
@@ -80,7 +95,7 @@ begin
 
   #
   # Next step is to walk through all files in the new checksum list and validate them
-  # We start at a random location so that it at leat makes progress if the app is 
+  # We start at a random location so that it at least makes progress if the app is 
   # stopped and restarted a lot
   #
 
@@ -131,7 +146,6 @@ begin
   json = Oj.dump(checksum_map)
   File.open(checksum_file, 'w') { |f| f.write(json) }
   puts "\nSuccessfully wrote #{files.count} checksums to #{checksum_file}"
-  File.delete(backup_file)
 rescue => e
   puts e.message
 end
